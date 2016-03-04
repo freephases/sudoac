@@ -1,5 +1,6 @@
 /*
- Free Phases AC sq wave simulator with current and power control via TTL
+ Free Phases AC sq wave simulator with current sense and power control via TTL
+ Voltage is fixed at 48.01 volts
 */
 
 #include <OnOff.h>
