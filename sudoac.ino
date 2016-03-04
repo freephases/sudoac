@@ -1,15 +1,9 @@
 /*
- Free Phases Three Phase simulator with current TTL output
+ Free Phases AC sq wave simulator with current and power control via TTL
 */
 
 #include <OnOff.h>
 #include <SoftwareSerial.h>
-//ACS715 current sensor
-// For calculating I have (((long)sensorValue-511.5)*5000/1023)*2000/133;
-// http://forum.pololu.com/viewtopic.php?f=32&t=10263
-// http://www.instructables.com/id/DIY-Amp-Hour-Meter-Arduino/
-// beter example -> http://www.hacktronics.com/Tutorials/arduino-current-sensor.html
-
 #define DEBUG_TO_SERIAL 1
 #define ROB_WS_MAX_STRING_DATA_LENGTH 120
 
@@ -22,7 +16,6 @@ SoftwareSerial controller(12, 3);
 volatile int8_t segment = 0;
 int timer1_counter;
 const int acs715port = A0;
-//float current = 0.000;
 const unsigned long currentReadMillisInterval = 30;
 unsigned long lastCurrentReadMillis = 0;
 const int volts = 48;
