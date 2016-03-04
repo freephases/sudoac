@@ -210,13 +210,14 @@ void setup() {
   Serial.begin(9600);
   controller.begin(9600);
   delay(30);
+  //let the main logger/controller know we are here
   controller.println("OK|go|!");
   turnOnStartMillis = millis();
   led.off();
 }
 
 
-/*ISR(TIMER1_OVF_vect)        // interrupt service routine for 2 pulse sine wave in sq form ;)
+/*ISR(TIMER1_OVF_vect)        // interrupt service routine for 2 pulse sq wave form ;)
 {
   TCNT1 = timer1_counter;   // preload timer
 
@@ -246,7 +247,7 @@ void setup() {
 */
 
 /**
-* interrupt service routine for sudo AC
+* interrupt service routine for sudo AC with 600 AC pulses per sec
 */
 ISR(TIMER1_OVF_vect)        
 {
