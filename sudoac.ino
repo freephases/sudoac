@@ -1,6 +1,6 @@
 /*
  Free Phases AC sq wave simulator with current sense and power control via TTL
- Voltage is fixed at 48.01 volts
+ Voltage is fixed at 48.00 volts
 */
 
 #include <OnOff.h>
@@ -19,7 +19,7 @@ int timer1_counter;
 const int acs715port = A0;
 const unsigned long currentReadMillisInterval = 30;
 unsigned long lastCurrentReadMillis = 0;
-const int volts = 48;
+const float fixedVoltage = 48.00;
 float averageAmps = 0.0;
 float watts = 0.0;
 long sampleAmpVal = 0;
@@ -69,7 +69,6 @@ void sendData()
 void readCurrent()
 {
   sensorValue = analogRead(acs715port);
-  //  if (sensorValue<100) sensorValue = 100;
   sampleAmpVal += sensorValue;
   currentReadCount++;
   if (currentReadCount == samplesToRead) {
@@ -79,13 +78,12 @@ void readCurrent()
     sampleAmpVal = 0;
     currentReadCount = 0;
 
-    // convert to milli amps //5003 is 5.003 v
-    // Serial.println(readVcc());//489 worked before ;)
+    // Serial.println(readVcc());//489 worked before, readVcc not working on mini pro ;)
     long currentR = (((long)avgSAV * 5002 / 1023) - 493 ) * 1000 / 134;
     if (currentR<0) currentR=0;
   
     averageAmps = (float)currentR / 1000.000;
-    watts = averageAmps * 48.000;
+    watts = averageAmps * fixedVoltage;
     if (watts<0.000) {
       watts = 0.000;
     }
