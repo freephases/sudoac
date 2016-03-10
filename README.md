@@ -5,9 +5,10 @@ Produces 1 cycle consisting of 10 segments of equal time:<br />
 direction:   [+][0][+][0][0][-][0][-][0][0]<br />
 segment:     [0][1][2][3][4][5][6][7][8][9]<br />
   <br />
-  wave form  |_|__ _ __<br />
-                  | |<br />
-
+<pre>
+  wave form  |_|__ _ __
+                  | |
+</pre>
 <br />
 Speed adjustable from ~25Hz to 3.1Hz in a scale of 0 to 100 via serial<br />
 <br />
