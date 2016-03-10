@@ -10,7 +10,7 @@ segment:     [0][1][2][3][4][5][6][7][8][9]<br />
                   | |
 </pre>
 <br />
-Speed adjustable from ~25Hz to 3.1Hz in a scale of 0 to 100 via serial<br />
+Speed adjustable from ~25Hz to 3.1kHz in a scale of 0 to 100 via serial<br />
 <br />
 Serial request commands are made up of a command and then data in follow CSV type format:<br />
 <br />
