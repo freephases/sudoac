@@ -10,12 +10,12 @@
 
 OnOff pwmMosfet(10);
 OnOff fan(11);
-OnOff forward(6);
-OnOff backwards(5);
+OnOff positive(6);
+OnOff negitive(5);
 OnOff led(13);
 SoftwareSerial controller(12, 3);
 volatile int8_t segment = 0;
-int timer1_counter;
+volatile long timer1_counter;
 const int acs715port = A0;
 const unsigned long currentReadMillisInterval = 30;
 unsigned long lastCurrentReadMillis = 0;
@@ -49,6 +49,27 @@ long readVcc() {
   result |= ADCH << 8;
   result = 1126400L / result; // Back-calculate AVcc in mV return result;
   return result;
+}
+/**
+* Return a value with in a CSV string where index is the coloumn count, 
+* is zero based, 0=1, 1=2 and so on...
+*/
+String getValue(String data, char separator, int index)
+{
+  int found = 0;
+  int strIndex[] = {
+    0, -1        };
+  int maxIndex = data.length()-1;
+
+  for(int i=0; i<=maxIndex && found<=index; i++){
+    if(data.charAt(i)==separator || i==maxIndex){
+      found++;
+      strIndex[0] = strIndex[1]+1;
+      strIndex[1] = (i == maxIndex) ? i+1 : i;
+    }
+  }
+
+  return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
 void sendData()
@@ -177,14 +198,33 @@ void processIncoming() {
       break;
     case '-' : // off      
       hbTurnOff();
-      controller.println("OK|-|!");      
+      controller.println("OK|-|!");
+      break;    
+    case 's' : // off      
+      setHbSpeed(getValue(serialBuffer, '|', 1).toInt());
+      controller.println("OK|s|!");
+      break;    
     default : 
       break;
   }
 }
 
 
-
+void setHbSpeed(int percentage)
+{
+  //50hz min (0%), 3.1kHz(100%) max AC switching
+  long newCounter = map((long)percentage, 0, 100, 65225, 65531);  
+// Serial.print("New counter: ");
+//  Serial.println(newCounter, DEC);
+  
+  //keep in range
+  if (newCounter>65531) newCounter = 65531;
+  else if (newCounter<65225) newCounter = 65225;
+  
+  timer1_counter = newCounter;
+  Serial.print("New counter: ");
+  Serial.println(newCounter, DEC);
+}
 
 void setup() {  
   // initialize timer1
@@ -193,11 +233,12 @@ void setup() {
   TCCR1B = 0;
 
   // Set timer1_counter to the correct value for our interrupt interval
-  // timer1_counter = 62496;// preload timer 65536 - (62500/15000Hz)
-  //timer1_counter = 65305;// preload timer 65536 - (62500/24000Hz)
-  timer1_counter = 65519;// preload timer 65536 - (62500/3600Hz) - 3600 / 6 = 600 - scaled to 3600 / 12 to allow for gap to stop shorting
+  //  timer1_counter = 65519;// preload timer 65536 - (62500/3600Hz) - 3600 / 6 = 600 - scaled to 3600 / 12 to allow for gap to stop shorting
   // timer1_counter = 65328;// preload timer 65536 - (62500/300Hz)
-
+  //65531 = 3.1kHz AC switching
+//top = timer1_counter = 65531;// preload timer 65536 - (62500/3600Hz) - 3600 / 6 = 600 - scaled to 3600 / 12 to allow for gap to stop shorting
+ timer1_counter = 65519;// preload timer 65536 - (62500/3600Hz) - 3600 / 6 = 600 - scaled to 3600 / 12 to allow for gap to stop shorting
+  
   //timer1_counter = 64911;   // preload timer 65536-16MHz/256/100Hz
   //timer1_counter = 64286;   // preload timer 65536-16MHz/256/50Hz
   //timer1_counter = 34286;   // preload timer 65536-16MHz/256/2Hz
@@ -216,44 +257,56 @@ void setup() {
 }
 
 
-/*ISR(TIMER1_OVF_vect)        // interrupt service routine for 2 pulse sq wave form ;)
+ISR(TIMER1_OVF_vect)        // interrupt service routine for 2/2 pulse sq wave form
 {
   TCNT1 = timer1_counter;   // preload timer
+  if (!turnedOn && !turnedOff) {
+    positive.off();
+    negitive.off();
+    segment = 0;
+    turnedOff = true;
+    led.off();
+  } else if (turnedOn) {     
 
-  //1 segments per 1/300th of a second
-// 1 cycle is made up up 10 segments:
-// [1][0][1][0][0][-1][0][-1][0][0]
+ 
+// 1 cycle consists of 10 segments of equal time:
+// direction:   [+][0][+][0][0][-][0][-][0][0]
+// segment:     [0][1][2][3][4][5][6][7][8][9]
+// wave form  |_|__ _ __
+//                 | |
+
   switch(segment){
     case 2:
-    case 0:  forward.on(); // + pulse
+    case 0:  positive.on(); // + pulse
         break;
     case 3:
-    case 1: forward.off();
+    case 1: positive.off();
         break;
     case 9:
-    case 4: //space
+    case 4: //space with nothing to do (dream on...)
         break;
     case 7:
-    case 5: backwards.on();
+    case 5: negitive.on();// - pulse
         break;
     case 8:
-    case 6: backwards.off();
+    case 6: negitive.off();
         break;
   }
   segment++;
   if (segment>9) segment = 0;
+  }
 }
-*/
+
 
 /**
 * interrupt service routine for sudo AC with 600 AC pulses per sec
 */
-ISR(TIMER1_OVF_vect)        
+/*ISR(TIMER1_OVF_vect)        
 {
   TCNT1 = timer1_counter;   // preload timer
   if (!turnedOn && !turnedOff) {
-    forward.off();
-    backwards.off();
+    positive.off();
+    negitive.off();
     segment = 0;
     turnedOff = true;
     led.off();
@@ -263,19 +316,19 @@ ISR(TIMER1_OVF_vect)
     // [1][0][-1][0][1][0][-1][0][1][0][-1][0]
   
     switch (segment) {
-      case 0:  forward.on(); // + pulse
+      case 0:  positive.on(); // + pulse
         break;
-      case 1: forward.off();
+      case 1: positive.off();
         break;
-      case 2: backwards.on();// - pulse
+      case 2: negitive.on();// - pulse
         break;
-      case 3: backwards.off();
+      case 3: negitive.off();
         break;
     }
     segment++;
     if (segment > 3) segment = 0;
   }
-}
+}*/
 
 void hbTurnOn() 
 {
