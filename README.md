@@ -19,13 +19,13 @@ Serial request commands are made up of a command and then data in follow CSV typ
 '!' followed by line return marks end of request command<br />
 <br />
 Commands:<br />
-s   set speed where [value] is 0-100,<br />
+<strong>s</strong>   set speed where [value] is 0-100,<br />
     example:  s|100|!<br />
 <br />
-+   turn on<br />
+<strong>+</strong>   turn on<br />
     example: +|!<br />
 <br />
--   turn off<br />
+<strong>-</strong>   turn off<br />
     example: -|!<br />
 <br />
 Responses can be<br />
