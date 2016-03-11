@@ -215,7 +215,8 @@ void readCurrent()
   }
 }
 
-void currentTimer() {
+void currentTimer() 
+{
   if (millis() - lastCurrentReadMillis > currentReadMillisInterval) {
     lastCurrentReadMillis = millis();
     readCurrent();
@@ -284,7 +285,8 @@ void scanForIncoming()
 /**
 * Process serial commands
 */
-void processIncoming() {
+void processIncoming() 
+{
   char recordType = serialBuffer[0];
   switch (recordType) {
     case '+' : // on 
@@ -426,7 +428,8 @@ void hbTurnOff()
 /* Start up and main/looper *********************************************************************************/
 
 
-void setup() {  
+void setup()
+{  
   // initialize timer1
   noInterrupts();           // disable all interrupts
   TCCR1A = 0;
@@ -446,7 +449,8 @@ void setup() {
 }
 
 
-void loop() {  
+void loop() 
+{  
   currentTimer();
   scanForIncoming();
   manageFan();
