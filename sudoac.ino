@@ -58,7 +58,7 @@ volatile long timer1_counter;
 const int acs715port = A0;
 
 /**
-* Interval between readying current sensor in millis
+* Interval between reading current sensor in millis
 */
 const unsigned long currentReadMillisInterval = 30;
 
@@ -91,7 +91,7 @@ long sensorValue = 0;
 long currentReadCount = 0;
 
 /**
-* Number of samples from current sensor to read
+* samplesToRead = Number of samples from current sensor to read
 */
 const int samplesToRead = 168;
 
@@ -116,7 +116,7 @@ char inByte = 0;
 /**
 * turnedOn - true if not yet fully turned off
 * turnedOff - true if fully turned off
-* Need to redo was to make thinsg a bit safer, it allows for interupt to turn bridge off not serial request in case interupt was about to turn on a mosfet 
+* Need to redo. thsi was to make things a bit safer, it allows for interupt to turn bridge off not serial within serial request in case interupt was about to turn on a mosfet 
 */
 volatile boolean turnedOn = false;
 volatile boolean turnedOff = true;
@@ -139,7 +139,7 @@ volatile boolean turnedOff = true;
 
 
 /**
-* Return a value with in a CSV string where index is the coloumn count, 
+* Return a value from within a CSV string where index is the coloumn count, 
 * is zero based, 0=1, 1=2 and so on...
 */
 String getValue(String data, char separator, int index)
