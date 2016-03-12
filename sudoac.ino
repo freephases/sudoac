@@ -327,9 +327,9 @@ void setHbSpeed(int percentage)
 /**
 * Interrupt service routine for basic 2/2 pulse sq wave form
 *
-* 1 cycle consists of 10 segments of equal time:
+* 1 cycle consists of 10 fractions of equal time:
 * direction:   [+][0][+][0][0][-][0][-][0][0]
-* segment/pos: [0][1][2][3][4][5][6][7][8][9]
+* pos:         [0][1][2][3][4][5][6][7][8][9]
 *
 * wave form  |_|__ _ __
 *                 | |

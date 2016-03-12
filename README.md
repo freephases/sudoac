@@ -1,9 +1,9 @@
 # sudoac
 H-Bridge driver for use with LENR Logger<br />
 <br />
-Produces 1 cycle consisting of 10 segments of equal time:<br />
+Produces 1 cycle consisting of 10 parts of equal time:<br />
 direction:   [+][0][+][0][0][-][0][-][0][0]<br />
-segment:     [0][1][2][3][4][5][6][7][8][9]<br />
+part:        [0][1][2][3][4][5][6][7][8][9]<br />
   <br />
 <pre>
   wave form  |_|__ _ __
