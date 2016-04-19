@@ -4,7 +4,7 @@
 * 
 * For the Public domain!
 * 
-* Your free to criticise and free to reuse whatever you want, that's all i've ever done ;) - Have Fun!
+* Your free to criticise and free to reuse whatever you want - Have Fun!
 **/
 
 //on/off class see: https://github.com/freephases/arduino-onoff-lib
@@ -15,7 +15,7 @@
 /**
 * Max length of serial data we want to read as a single resquest/command
 */
-#define MAX_SERIAL_DATA_LENGTH 10
+#define MAX_SERIAL_DATA_LENGTH 30
 
 /**
 * H-Bridge heat sink fan
@@ -60,7 +60,11 @@ const int acs715port = A0;
 /**
 * Interval between reading current sensor in millis
 */
-const unsigned long currentReadMillisInterval = 30;
+const unsigned long currentReadMillisInterval = 22;
+/**
+* samplesToRead = Number of samples from current sensor to read
+*/
+const int samplesToRead = 80;
 
 /**
 * Last time current was read in millis
@@ -76,7 +80,7 @@ const float fixedVoltage = 48.00;
 * Average DC input Amps
 */
 float averageAmps = 0.0;
-
+float totalAverageValues = 0.0;
 /**
 * Power in Watts (Not RMS)
 */
@@ -90,10 +94,7 @@ long avgSAV = 0;
 long sensorValue = 0;
 long currentReadCount = 0;
 
-/**
-* samplesToRead = Number of samples from current sensor to read
-*/
-const int samplesToRead = 168;
+
 
 /**
 * fanTurnOffTimeOut - used to switch off fan after a set time after h-bridge is turned off
@@ -113,6 +114,10 @@ short pos = 0; // position in read serialBuffer
 char serialBuffer[MAX_SERIAL_DATA_LENGTH];
 char inByte = 0;
 
+int lastPercentage = 0;
+
+const float powerSupplyMaxAmps = 8.00;// is 8.3 but say 8
+unsigned long lastReducedPowerMillis = 0;
 /**
 * turnedOn - true if not yet fully turned off
 * turnedOff - true if fully turned off
@@ -120,6 +125,7 @@ char inByte = 0;
 */
 volatile boolean turnedOn = false;
 volatile boolean turnedOff = true;
+
 
 //NOT USED DOES NOT WORK ON MINI PRO 
 //readVcc() {
@@ -179,9 +185,9 @@ void sendData()
 }
 
 /**
-* Read an Process Current sensor
+* Read and process Current sensor using avg of raw analog values
 */
-void readCurrent()
+void readCurrentAvg1()
 {
   sensorValue = analogRead(acs715port);
   sampleAmpVal += sensorValue;
@@ -193,11 +199,12 @@ void readCurrent()
     sampleAmpVal = 0;
     currentReadCount = 0;
 
-    // Serial.println(readVcc());//489 worked before, readVcc not working on mini pro ;)
-    long currentR = (((long)avgSAV * 5002 / 1023) - 493 ) * 1000 / 134;
-    if (currentR<0) currentR=0;
-  
+    // Serial.println(readVcc());//readVcc not working on mini pro ;)
+    long currentR = ( ((long)avgSAV * 5006 / 1024) - 500 ) * 1000 / 133;
+    
     averageAmps = (float)currentR / 1000.000;
+    if (averageAmps<=0.09) averageAmps=0.0;
+  
     watts = averageAmps * fixedVoltage;
     if (watts<0.000) {
       watts = 0.000;
@@ -215,16 +222,74 @@ void readCurrent()
   }
 }
 
+/**
+* Read and process Current sensor using avg of calculated analog values
+*/
+void readCurrentAvg2()
+{
+  sensorValue = analogRead(acs715port);
+  //sampleAmpVal += sensorValue;
+  long currentR = ( ((long)sensorValue * 5006 / 1024) - 500 ) * 1000 / 133;
+  if (currentR<0) currentR = 0;
+  totalAverageValues += (float)currentR / 1000.000;
+  currentReadCount++;
+  if (currentReadCount == samplesToRead) {
+    averageAmps = totalAverageValues / samplesToRead;
+    
+    //reset counters
+    totalAverageValues = 0;
+    currentReadCount = 0;
+   
+
+    if (averageAmps<=0.09) averageAmps=0.0;
+  
+    watts = averageAmps * fixedVoltage;
+    if (watts<0.000) {
+      watts = 0.000;
+    }
+
+    sendData();
+    if (DEBUG_TO_SERIAL == 1) {
+     // Serial.print(currentR);
+     // Serial.print(" mA, ");
+      Serial.print(averageAmps, DEC);
+      Serial.print(" A, ");
+      Serial.print(watts, DEC);
+      Serial.println(" W");
+    }
+  }
+}
+
+void checkOverLoading()
+{
+  if (!turnedOff) {
+    if (averageAmps>powerSupplyMaxAmps) {
+      controller.println("E|HA|!"); //High Amps message
+      setHbSpeed(lastPercentage-1);//reduce power
+      if (lastReducedPowerMillis==0) {
+        lastReducedPowerMillis = millis();
+      } else if (millis()-lastReducedPowerMillis>30000) {
+          hbTurnOff(); //force stop, using to much power for to long
+          controller.println("OK|-|!");
+      }
+    } else if (lastReducedPowerMillis!=0 && averageAmps<=powerSupplyMaxAmps) {
+      lastReducedPowerMillis = 0;
+    }
+  }
+}
+
+
 void currentTimer() 
 {
   if (millis() - lastCurrentReadMillis > currentReadMillisInterval) {
     lastCurrentReadMillis = millis();
-    readCurrent();
+    //readCurrent();
+    readCurrentAvg2();
     if (!turnedOff) { 
       if (averageAmps>0.100) led.toggle(); 
       else led.off();
     }    
-  }
+  } 
 }
 
 /**
@@ -261,9 +326,8 @@ void scanForIncoming()
 
     // read the incoming byte:
     inByte = controller.read();
-
+//Serial.print(inByte);
     if (inByte == '\r') continue; //ignore 
-    pos++;
     
     if (inByte == '\n' || pos == MAX_SERIAL_DATA_LENGTH - 1) //we have the end of command line or reached the max we can read 
     {
@@ -278,10 +342,32 @@ void scanForIncoming()
     } else {
       // add to our read serialBuffer
         serialBuffer[pos] = inByte;
+        pos++;
     }
 
   }
 }
+
+/**
+* Set speed of h-bridge 0 is around 25Hz AC and 100 is 2.1kHz AC with 48v input - 
+* last checked AC freq.: 10th March 2016
+* TODO: improve range of times, 0-512 may be better stepping
+*/
+void setHbSpeed(int percentage)
+{
+  long newCounter = map((long)percentage, 0, 100, 65225, 65531);  
+  
+  lastPercentage = percentage;
+ 
+  //keep in range
+  if (newCounter>65531) newCounter = 65531;
+  else if (newCounter<65225) newCounter = 65225;
+  
+  timer1_counter = newCounter;
+  Serial.print("New counter: ");
+  Serial.println(newCounter, DEC);
+}
+
 /**
 * Process serial commands
 */
@@ -306,23 +392,6 @@ void processIncoming()
   }
 }
 
-/**
-* Set speed of h-bridge 0 is around 25Hz AC and 100 is 2.1kHz AC with 48v input - 
-* last checked AC freq.: 10th March 2016
-* TODO: improve range of times, 0-512 may be better stepping
-*/
-void setHbSpeed(int percentage)
-{
-  long newCounter = map((long)percentage, 0, 100, 65225, 65531);  
- 
-  //keep in range
-  if (newCounter>65531) newCounter = 65531;
-  else if (newCounter<65225) newCounter = 65225;
-  
-  timer1_counter = newCounter;
-  Serial.print("New counter: ");
-  Serial.println(newCounter, DEC);
-}
 
 /**
 * Interrupt service routine for basic 2/2 pulse sq wave form
