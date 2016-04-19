@@ -434,10 +434,11 @@ ISR(TIMER1_OVF_vect)
           break;
     }
     segment++;
-    if (segment>9) segment = 0;
+    if (segment>8) segment = 0;
     
   }
 }
+
 
 
 ///**
