@@ -1,6 +1,6 @@
 /***
 * Free Phases AC sq wave simulator with current sense and power control via TTL
-* Voltage is fixed at 48.00 volts
+* Voltage is fixed at 42.00 volts for 4.3 ohm coil
 * 
 * For the Public domain!
 * 
@@ -74,7 +74,7 @@ unsigned long lastCurrentReadMillis = 0;
 /**
 * DC input voltage
 */
-const float fixedVoltage = 48.00;
+const float fixedVoltage = 49.9;
 
 /**
 * Average DC input Amps
@@ -116,8 +116,7 @@ char inByte = 0;
 
 int lastPercentage = 0;
 
-const float powerSupplyMaxAmps = 8.00;// is 8.3 but say 8
-unsigned long lastReducedPowerMillis = 0;
+const float powerSupplyMaxWatts = 390.00;// is 400 but say 390 to be on the safe side, that is if the fixedVoltage var specified above is correct for given PSU
 /**
 * turnedOn - true if not yet fully turned off
 * turnedOff - true if fully turned off
@@ -225,66 +224,57 @@ void readCurrentAvg1()
 /**
 * Read and process Current sensor using avg of calculated analog values
 */
-void readCurrentAvg2()
-{
-  sensorValue = analogRead(acs715port);
-  //sampleAmpVal += sensorValue;
-  long currentR = ( ((long)sensorValue * 5006 / 1024) - 500 ) * 1000 / 133;
-  if (currentR<0) currentR = 0;
-  totalAverageValues += (float)currentR / 1000.000;
-  currentReadCount++;
-  if (currentReadCount == samplesToRead) {
-    averageAmps = totalAverageValues / samplesToRead;
-    
-    //reset counters
-    totalAverageValues = 0;
-    currentReadCount = 0;
-   
-
-    if (averageAmps<=0.09) averageAmps=0.0;
-  
-    watts = averageAmps * fixedVoltage;
-    if (watts<0.000) {
-      watts = 0.000;
-    }
-
-    sendData();
-    if (DEBUG_TO_SERIAL == 1) {
-     // Serial.print(currentR);
-     // Serial.print(" mA, ");
-      Serial.print(averageAmps, DEC);
-      Serial.print(" A, ");
-      Serial.print(watts, DEC);
-      Serial.println(" W");
-    }
-  }
-}
+//void readCurrentAvg2()
+//{
+//  sensorValue = analogRead(acs715port);
+//  //sampleAmpVal += sensorValue;
+//  long currentR = ( ((long)sensorValue * 5006 / 1024) - 500 ) * 1000 / 133;
+//  if (currentR<0) currentR = 0;
+//  totalAverageValues += (float)currentR / 1000.000;
+//  currentReadCount++;
+//  if (currentReadCount == samplesToRead) {
+//    averageAmps = totalAverageValues / samplesToRead;
+//    
+//    //reset counters
+//    totalAverageValues = 0;
+//    currentReadCount = 0;
+//   
+//
+//    if (averageAmps<=0.09) averageAmps=0.0;
+//  
+//    watts = averageAmps * fixedVoltage;
+//    if (watts<0.000) {
+//      watts = 0.000;
+//    }
+//
+//    sendData();
+//    if (DEBUG_TO_SERIAL == 1) {
+//     // Serial.print(currentR);
+//     // Serial.print(" mA, ");
+//      Serial.print(averageAmps, DEC);
+//      Serial.print(" A, ");
+//      Serial.print(watts, DEC);
+//      Serial.println(" W");
+//    }
+//  }
+//}
 
 void checkOverLoading()
-{
+{ 
   if (!turnedOff) {
-    if (averageAmps>powerSupplyMaxAmps) {
-      controller.println("E|HA|!"); //High Amps message
-      setHbSpeed(lastPercentage-1);//reduce power
-      if (lastReducedPowerMillis==0) {
-        lastReducedPowerMillis = millis();
-      } else if (millis()-lastReducedPowerMillis>30000) {
-          hbTurnOff(); //force stop, using to much power for to long
-          controller.println("OK|-|!");
-      }
-    } else if (lastReducedPowerMillis!=0 && averageAmps<=powerSupplyMaxAmps) {
-      lastReducedPowerMillis = 0;
-    }
+    if (watts>powerSupplyMaxWatts) {
+      hbTurnOff(); //force stop, using way to much power for way to long      
+      controller.println("E|HA|!"); //High Amps message, have to reboot to get out of this, it should not happen if you have calculated coil ohm's correctly.      
+    } 
   }
 }
 
-
-void currentTimer() 
+void readCurrent() 
 {
   if (millis() - lastCurrentReadMillis > currentReadMillisInterval) {
     lastCurrentReadMillis = millis();
-    //readCurrent();
-    readCurrentAvg2();
+    readCurrentAvg1();
+    checkOverLoading();
     if (!turnedOff) { 
       if (averageAmps>0.100) led.toggle(); 
       else led.off();
@@ -373,8 +363,8 @@ void setHbSpeed(int percentage)
 */
 void processIncoming() 
 {
-  char recordType = serialBuffer[0];
-  switch (recordType) {
+  char command = serialBuffer[0];
+  switch (command) {
     case '+' : // on 
       hbTurnOn();
       controller.println("OK|+|!");
@@ -392,17 +382,16 @@ void processIncoming()
   }
 }
 
-
 /**
-* Interrupt service routine for basic 2/2 pulse sq wave form
+* Interrupt service routine for basic sq wave form with gaps to allow mosfets to close due to back emf from coil
 *
-* 1 cycle consists of 10 fractions of equal time:
-* direction:   [+][0][+][0][0][-][0][-][0][0]
-* pos:         [0][1][2][3][4][5][6][7][8][9]
-*
-* wave form  |_|__ _ __
-*                 | |
-*/
+* 1 cycle consists of 12 fractions of equal time:
+* direction:   [+][+][+][+][0][0][-][-][-][-][0 ][0 ]
+* pos:         [0][1][2][3][4][5][6][7][8][9][10][11]
+*              
+* wave form     | |_   _| |_   _| |_   _ 
+*                   |_|     |_|     |_|
+*/                  
 ISR(TIMER1_OVF_vect)        
 {
   TCNT1 = timer1_counter;   // preload timer
@@ -417,32 +406,72 @@ ISR(TIMER1_OVF_vect)
   } else if (turnedOn) {      
     
     switch(segment){
-      case 2:
-      case 0:  positive.on(); // + pulse
+      case 0 ... 3: positive.on(); // + pulse
           break;
-      case 3:
-      case 1: positive.off();
+      case 4 ... 5: positive.off();
           break;
-      case 9:
-      case 4: //space with nothing to do
+      case 6 ... 9: negitive.on();// - pulse
           break;
-      case 7:
-      case 5: negitive.on();// - pulse
-          break;
-      case 8:
-      case 6: negitive.off();
+      case 10 ... 11: negitive.off();
           break;
     }
-    segment++;
-    if (segment>8) segment = 0;
+
+   segment++;
+   if (segment>11) segment = 0;    
     
   }
 }
 
+/**
+* Interrupt service routine for basic 2/2 pulse sq wave form
+*
+* 1 cycle consists of 10 fractions of equal time:
+* direction:   [+][0][+][0][0][-][0][-][0][0]
+* pos:         [0][1][2][3][4][5][6][7][8][9]
+*
+* wave form  |_|__ _ __
+*                 | |
+*/
+//ISR(TIMER1_OVF_vect)        
+//{
+//  TCNT1 = timer1_counter;   // preload timer
+//  if (!turnedOn && !turnedOff) {
+//    
+//    positive.off();
+//    negitive.off();
+//    segment = 0;
+//    turnedOff = true;
+//    led.off();
+//    
+//  } else if (turnedOn) {      
+//    
+//    switch(segment){
+//      case 2:
+//      case 0:  positive.on(); // + pulse
+//          break;
+//      case 3:
+//      case 1: positive.off();
+//          break;
+//      case 9:
+//      case 4: //space with nothing to do
+//          break;
+//      case 7:
+//      case 5: negitive.on();// - pulse
+//          break;
+//      case 8:
+//      case 6: negitive.off();
+//          break;
+//    }
+//    segment++;
+//    if (segment>8) segment = 0;
+//    
+//  }
+//}
+
 
 
 ///**
-//* interrupt service routine for sudo AC with 600 AC pulses per sec
+//* interrupt service routine for sudo AC sq wave
 //*/
 //ISR(TIMER1_OVF_vect)        
 //{
@@ -454,9 +483,9 @@ ISR(TIMER1_OVF_vect)
 //    turnedOff = true;
 //    led.off();
 //  } else if (turnedOn) {     
-//    //1 segmentment 12/3600Hz with 6 pulses each with a Zero after wards
-//    // 1 cycle is made up of 1 phase x 3:
-//    // [1][0][-1][0][1][0][-1][0][1][0][-1][0]
+//    //1 segmentment 12/3600Hz with 2 pulses 
+//    // 1 cycle is:
+//    // [P][0][N][0]
 //  
 //    switch (segment) {
 //      case 0:  positive.on(); // + pulse
@@ -521,8 +550,7 @@ void setup()
 
 void loop() 
 {  
-  currentTimer();
+  readCurrent();
   scanForIncoming();
-  manageFan();
-  
+  manageFan();  
 }
