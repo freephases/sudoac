@@ -61,7 +61,7 @@ Basic commands are:
 Waveform is composed of:
 
    1 = (+)(-) normal side on h-bridge
-   2 = (-)(+) inverted to first side
+   2 = (-)(+) inverted to "normal" side
    0 = open/off (or anything not a 1 or 2)
 
    There must be a 0 always before a 1 or a 2. We always start as off (0) so starting with 0 will just delay the start!
