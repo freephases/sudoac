@@ -60,7 +60,7 @@
 #define MAX_SERIAL_DATA_LENGTH 54
 
 /**
-  H-Bridge heat sink fan
+  Mosfet control for H-Bridge heatsink fan, it's 12v so this just switching mosfet
 */
 OnOff fan(11);
 
@@ -82,7 +82,7 @@ OnOff led(13);
 /**
    step down
 */
-//SoftwareSerial stepdown(2, 9);
+//SoftwareSerial stepdown(2, 9);//cannot use with Controller software serial at the mo!
 
 /**
   Controller serial
@@ -116,17 +116,9 @@ const float fixedVoltage = 50.0;//as of 13-12-2016, no get voltage from stepdown
 float averageAmps = 0.0;
 //float totalAverageValues = 0.0;
 /**
-  Power in Watts (Not RMS)
+  Power in Watts from stepdown module serial
 */
 float watts = 0.0;
-
-/**
-  Vars use for calculating current
-*/
-long sampleAmpVal = 0;
-long avgSAV = 0;
-long sensorValue = 0;
-long currentReadCount = 0;
 
 /**
   fanTurnOffTimeOut - used to switch off fan after a set time after h-bridge is turned off
@@ -147,7 +139,7 @@ char serialBuffer[MAX_SERIAL_DATA_LENGTH];
 char inByte = 0;
 
 int lastHbSpeed = 0;
-double stepdownLastVoltage = 0.00;
+double stepdownLastVoltage = 0.00;//last voltage set via serial, so we do not repete ;)
 
 const float powerSupplyMaxWatts = 500.00;// is 400 but say 390 to be on the safe side, that is if the fixedVoltage var specified above is correct for given PSU
 /**
@@ -155,21 +147,27 @@ const float powerSupplyMaxWatts = 500.00;// is 400 but say 390 to be on the safe
   turnedOff - true if fully turned off
   Need to redo. thsi was to make things a bit safer, it allows for interupt to turn bridge off not serial within serial request in case interupt was about to turn on a mosfet
 */
-volatile boolean turnedOn = false;
-volatile boolean turnedOff = true;
+volatile boolean turnedOn = false;//used t tell system to turn on or off does not mean it is off
+volatile boolean turnedOff = true;//if ture then we are off, see you on line 153...
 
+/*
+ * step down vars
+ */
 char stepdownInChar;
 char stepdownSerialBuf[MAX_SERIAL_DATA_LENGTH];
 int stepdownBufPos = 0;
 float stepdownVoltage = 0.000;
 
+/**
+ * Max number of waveFormPatterns sent over serial and therefore in our array
+ */
 #define LL_WF_MAX_PATS 40
 /**
    waveFormPatterns, up to LL_WF_MAX_PATS, where each value is equal to one
    segment of the timer call based on current speed/frequency set, see setHbSpeed
 
-   1 = (+ -) normal side on h-bridge
-   2 = (- +) inverted to first side
+   1 = (+)(-) normal side on h-bridge
+   2 = (-)(+) inverted to first side
    0 = open/off (or anything not a 1 or 2)
 
    There must be a 0 always before a 1 or a 2. We always start as off (0) so starting with 0 will just delay the start!
@@ -182,7 +180,7 @@ float stepdownVoltage = 0.000;
                    __
     1,1,0,2,2,0 = |  |_    _
                        |__|
-                  +-+-0-+-+0 
+                  +-  0 -+ 0 
            _
     1,0 = | |_
           +- 0
@@ -196,11 +194,11 @@ float stepdownVoltage = 0.000;
                  ___   _
       1,2,0,1 = |   |_| |
                   |_|
-                 +-xx0+-
-                     _ _
+                +-xxx0 +-
+                     ___
       2,0,1,2 =    _|   |
                 |_|   |_|
-                 -+0+-xx
+                -+ 0 +xxx
 
   No off means certain death for the h-bridge!
     
@@ -221,29 +219,6 @@ short waveFormPatterns[LL_WF_MAX_PATS] = {1, 1, 0, 2, 2, 0};
 //internally used...
 short waveFormTotalFrames = 6;
 volatile int waveFormFramePlayingNow = 0;
-
-/**
-  Return a value from within a CSV string where index is the coloumn count,
-  is zero based, 0=1, 1=2 and so on...
-*/
-String getValue(String data, char separator, int index)
-{
-  int found = 0;
-  int strIndex[] = {
-    0, -1
-  };
-  int maxIndex = data.length() - 1;
-
-  for (int i = 0; i <= maxIndex && found <= index; i++) {
-    if (data.charAt(i) == separator || i == maxIndex) {
-      found++;
-      strIndex[0] = strIndex[1] + 1;
-      strIndex[1] = (i == maxIndex) ? i + 1 : i;
-    }
-  }
-
-  return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
-}
 
 /**
   sendData back to controller
@@ -267,31 +242,38 @@ void sendData()
   //Serial.println(sendBuf);
 }
 
+/**
+ * Send request to get stats from stepdown (r)  
+ * 
+ * stats requested are: voltage (v) amps (j) and watts (w) 
+ */
 void requestStepdownStats()
 {
+  //serial for stepdown is :[channel][x]\r\n but :[channel][x]\r\n\n worked better so using println
+  //[channel] is always 04 for this Sudo Ac mod,[x] is one of more actions, see processStepdownSerial for more details
   Serial.println(":04rvjw\r\n");
 }
 
 
-
-void checkOverLoading()
-{
-  if (!turnedOff) {
-    if (watts > powerSupplyMaxWatts) {
-      hbTurnOff(); //force stop, using way to much power for way to long
-      controller.println("E|!|HA|!"); //High Amps message, have to reboot to get out of this, it should not happen if you have calculated coil ohm's correctly.
-    }
-  }
-}
+//stepdown does this, may put back later
+//void checkOverLoading()
+//{
+//  if (!turnedOff) {
+//    if (watts > powerSupplyMaxWatts) {
+//      hbTurnOff(); //force stop, using way to much power for way to long
+//      controller.println("E|!|HA|!"); //High Amps message, have to reboot to get out of this, it should not happen if you have calculated coil ohm's correctly.
+//    }
+//  }
+//}
 
 void readCurrent()
 {
   if (millis() - lastCurrentReadMillis > currentReadMillisInterval) {
     lastCurrentReadMillis = millis();
-    //readCurrentAvg1();
     requestStepdownStats();
-    //checkOverLoading();
+    //checkOverLoading();//stepdown does this
     if (!turnedOff) {
+      //flash led so that human knows we are alive
       if (averageAmps > 0.100) led.toggle();
       else led.off();
     }
@@ -321,7 +303,7 @@ void manageFan()
 }
 
 /**
- * Process data returned from the stepdwon mod
+ * Process data returned from the stepdown mod
  */
 void processStepdownSerial()
 {
@@ -337,7 +319,7 @@ void processStepdownSerial()
         stepdownVoltage = float(rStr.toInt() / 100.0);
         break;
 
-      case 'j' : // current
+      case 'j' : // current / amps
         averageAmps = float(rStr.toInt() / 100.0);
         break;
 
@@ -418,14 +400,6 @@ void setVoltage(double newVoltage)
 }
 
 /**
- * double version of map function
- */
-double mapDouble(double x, double in_min, double in_max, double out_min, double out_max)
-{
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
-/**
  * set step down voltage using a 0-255 range,
  */
 void setVoltageByValue(int value)
@@ -441,11 +415,17 @@ void setVoltageByValue(int value)
 }
 
 /**
-   Make sure wave form always goes to 0 before 1 or 2 i.e: 1,2,0
+   Returns false if waveform is invalid
+    
+   To control H-Bridge direction we use the following:
+   
+   0 to mean off/Zero/Open
+   1 to mean (+)(-)
+   2 to mean (-)(+)
 
-   0 = off/Zero
-   1 = (+ -)
-   2 = (- +)
+   We need to make sure wave form is always 0 (open) before a 1 or 2 (closed) 
+   i.e: 1,2,0,1 is bad while 1,0,2,0 is good
+   
 */
 boolean validateWaveForm()
 {
@@ -467,16 +447,16 @@ boolean validateWaveForm()
         //hbInverted
         onTwo = true;
       } else { 
-        //anything else off - zero, this is very good!
+        //anything else means off - zero, open, nothing! - this is very good!
         onOne = false;
         onTwo = false;
         if (replay==1) {
-          break; //break out of both loops, checked what we need
+          break; //break out, checked what we need
         }
       }
   
       if (onOne && onTwo) {
-        //can't have both on without going to Zero, ERROR!
+        //can't have both on without going to Zero, return false ERROR!
         return false; 
       }
     }
@@ -708,9 +688,9 @@ void setup()
   Serial.println(":04so0\r\n");
   delay(60);
   setVoltageByValue(0);
-  //Serial.println(":04su1000\r\n");
+  //Serial.println(":04su1000\r\n");//su = set voltage onstep down, seting to 10v
   delay(60);
-  Serial.println(":04si1000\r\n");
+  Serial.println(":04si0800\r\n");//si=set max amps, setting it here to 8 amps
 }
 
 void loop()
