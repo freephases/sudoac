@@ -190,30 +190,33 @@ float stepdownVoltage = 0.000;
                _
     1,0,2,0 = | |_   _
                   |_|
+              +- 0 -+ 0
                    __
     1,1,0,2,2,0 = |  |_    _
                        |__|
+                  +-+-0-+-+0 
            _
     1,0 = | |_
-
+          +- 0
     2,0 =    _
           |_|
-
-   The last 2 will give normal PWM type DC, all the others are AC
+          -+ 0
+          
+   The last 2 will give normal PWM type DC, all the others are AC nd will invert direction of current
    
-   Bad examples are:
+   Bad examples where x marks a bad cross over are:
                  ___   _
       1,2,0,1 = |   |_| |
                   |_|
-
+                 +-xx0+-
                      _ _
       2,0,1,2 =    _|   |
                 |_|   |_|
+                 -+0+-xx
 
-
-  No Zero means certain death for the h-bridge!
+  No off means certain death for the h-bridge!
     
-  1,1,0,2,2,0 is the default wave form, this is longer on (1 or 2) than off (0) type AC sq waveform
+  1,1,0,2,2,0 is the default wave form, this is longer on (1 or 2) than off (0) type AC sq waveform [+-][+-][0][-+][-+][0]
   
   Others good ones to play with are:
   1,1,1,0,2,2,2,0 - slows freq down, can keep going repeating 1s or 2s
