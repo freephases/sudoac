@@ -39,3 +39,28 @@ Error where [msg] is error message<br />
 <br />
 Example: E|Error|!<br />
 
+Basic commands are:
+  
+  + 
+  Power On
+  
+  - 
+  Off
+  
+  s|[value]! 
+  Set speed where value is 0-255, example: s|255
+
+  v|[value]
+  Set voltage where value is 0 to 255 where 0=10v, 255=whatever fixedVoltage example:  v|150
+  
+  w|[wavefrom csv] 
+  Set wave form where wavefrom csv is csv string i.e 1,0,2,0 example: w|1,0,2,0
+  
+  W 
+  Display current wave form, output will be W|[wave form csv], i.e: W|1,0,2,0
+
+  ? 
+  display handshake, output is OK|go|!
+
+
+
