@@ -1,16 +1,13 @@
 # sudoac
-H-Bridge driver for use with LENR Logger<br />
+H-Bridge driver for use with LENR Logger 2<br />
 <br />
-Produces 1 cycle consisting of 10 parts of equal time:<br />
-direction:   [+][0][+][0][0][-][0][-][0][0]<br />
-part:        [0][1][2][3][4][5][6][7][8][9]<br />
   <br />
 <pre>
-  wave form  |_|__ _ __
-                  | |
+  Example  wave form  | |__ _ __
+                           | |
 </pre>
 <br />
-Speed adjustable from ~25Hz to 2.1kHz in a scale of 0 to 100 via serial<br />
+Speed adjustable from ~25Hz to 2.1kHz in a scale of 0 to 255 via serial<br />
 <br />
 Serial request commands are made up of a command and then data in follow CSV type format:<br />
 <br />

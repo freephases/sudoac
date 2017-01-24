@@ -65,14 +65,14 @@
 OnOff fan(11);
 
 /**
-  H-Bridge positive/forwards
+  H-Bridge normal
 */
-OnOff positive(6);
+OnOff hbNormal(6);
 
 /**
-  H-Bridge negitive/backwards
+  H-Bridge inverted
 */
-OnOff negitive(5);
+OnOff hbInverted(5);
 
 /**
   Led flashes when H-Bridge is on
@@ -178,13 +178,13 @@ float stepdownVoltage = 0.000;
 #define LL_WF_MAX_PATS 40
 /**
    waveFormPatterns, up to LL_WF_MAX_PATS, where each value is equal to one
-   segment of the timer call based on current speed/frequency
+   segment of the timer call based on current speed/frequency set, see setHbSpeed
 
-   1 = positive on
-   2 = negitive on
-   0 = off (or anything not a 1 or 2)
+   1 = (+ -) side on h-bridge
+   2 = (- +) inverted to first side
+   0 = open/off (or anything not a 1 or 2)
 
-   There must be a 0 always before a 1 or a 2. We always start as off so starting with 0 will just delay the start!
+   There must be a 0 always before a 1 or a 2. We always start as off (0) so starting with 0 will just delay the start!
 
     Good Examples:
                _
@@ -213,11 +213,18 @@ float stepdownVoltage = 0.000;
 
   No Zero means certain death for the h-bridge!
     
-  1,1,0,2,2,0 is the default on, this is always longer than off type AC sq waveform
+  1,1,0,2,2,0 is the default wave form, this is longer on (1 or 2) than off (0) type AC sq waveform
   
   Others good ones to play with are:
-  1,1,1,0,2,2,2,0 - slows freq down
-  1,1,0,1,1,0,2,2,0,2,2,0 - maybe closest to wave form seen in photos ;)
+  1,1,1,0,2,2,2,0 - slows freq down, can keep going repeating 1s or 2s
+  1,1,0,1,1,0,2,2,0,2,2,0 - maybe closest to wave form that was suggested by someone ;)
+  
+  DC only wave form examples:
+  1 - always postive side on, normal dc
+  2 - always negtive side on, normal dc
+  1,0 - dc pwm
+  2,0 - dc pwm but the other way around ;)
+  
 */
 short waveFormPatterns[LL_WF_MAX_PATS] = {1, 1, 0, 2, 2, 0}; 
 //internally used...
@@ -326,7 +333,9 @@ void manageFan()
   }
 }
 
-
+/**
+ * Process data returned from the stepdwon mod
+ */
 void processStepdownSerial()
 {
   if (stepdownSerialBuf[0] != ':') return; //not valid, ignore
@@ -356,6 +365,9 @@ void processStepdownSerial()
   }
 }
 
+/**
+ * Scan from incomming data from stepdown (sadly on main serial port)
+ */
 void readStepdownSerial()
 {
   while (Serial.available() > 0)
@@ -378,10 +390,216 @@ void readStepdownSerial()
   }
 }
 
+/**
+  Set speed of h-bridge 0 is around 25Hz AC and 255 is 2.1kHz AC with 48v input -
+  last checked AC freq.: 10th March 2016
+*/
+void setHbSpeed(int value)
+{
+  if (value != lastHbSpeed) {
+    long newCounter = map((long)value, 0, 255, 65225, 65531);
+    lastHbSpeed = value;
 
+    //keep in range
+    if (newCounter > 65531) newCounter = 65531;
+    else if (newCounter < 65225) newCounter = 65225;
+
+    timer1_counter = newCounter;
+    //  Serial.print("New counter: ");
+    //  Serial.println(newCounter, DEC);
+  }
+}
 
 /**
-  Read known incoming serial data in to char array
+ * Set stepdown voltage
+ */
+void setVoltage(double newVoltage)
+{
+  if (stepdownLastVoltage != newVoltage) {
+    stepdownLastVoltage = newVoltage;
+    //Serial.println(newVoltage);
+    int integerPart = (int)newVoltage;
+    int decimalPart = ((int)(newVoltage * 100) % 100);
+    String s = "";
+    if (decimalPart == 0) s = "0";
+    char buf[16];
+    char buf2[2];
+    s.toCharArray(buf2, 2);
+    sprintf(buf, ":04su%d%d%s\r\n", integerPart, decimalPart, buf2);
+    Serial.println(buf);
+  }
+}
+
+/**
+ * double version of map function
+ */
+double mapDouble(double x, double in_min, double in_max, double out_min, double out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+/**
+ * set step down voltage using a 0-255 range,
+ */
+void setVoltageByValue(int value)
+{
+  if (value<0) value = 0;
+  else if (value>255) value = 255;
+  
+  double newVoltage  = mapDouble((double)value, 0.00, 255.00, 10.00, fixedVoltage - 2.5);
+  if (newVoltage > fixedVoltage - 2.5) newVoltage = fixedVoltage - 2.5;
+  if (newVoltage < 10.00) newVoltage = 10.00;
+  
+  setVoltage(newVoltage);
+}
+
+/**
+   Make sure wave form always goes to 0 before 1 or 2 i.e: 1,2,0
+
+   0 = off/Zero
+   1 = (+ -)
+   2 = (- +)
+*/
+boolean validateWaveForm()
+{
+  if (waveFormPatterns[waveFormTotalFrames - 1] != 0 && waveFormPatterns[0] != 0) {
+    //need to zero somewhere, must be at end or at start, end is better!
+    return false;
+  }
+
+  boolean onOne = false;
+  boolean onTwo = false;
+  for(int replay=0; replay<2; replay++) {
+    //check wave form twice, but on 2nd time we only go up to next Zero
+    for (int i = 0; i < waveFormTotalFrames; i++) {
+      if (waveFormPatterns[i] == 1) { 
+        // hbNormal
+        onOne = true;
+      }
+      else if (waveFormPatterns[i] == 2) { 
+        //hbInverted
+        onTwo = true;
+      } else { 
+        //anything else off - zero, this is very good!
+        onOne = false;
+        onTwo = false;
+        if (replay==1) {
+          break; //break out of both loops, checked what we need
+        }
+      }
+  
+      if (onOne && onTwo) {
+        //can't have both on without going to Zero, ERROR!
+        return false; 
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Set the wave form to memory
+ */
+void setWaveForm(String wf)
+{
+  char wfC[80];
+  wf.toCharArray(wfC, 80);
+  waveFormTotalFrames = 1;
+  for (int i = 0; i < wf.length(); i++) {
+    if (wfC[i] = ',') waveFormTotalFrames++;
+  }
+  for (int i = 0; i < waveFormTotalFrames; i++) {
+    waveFormPatterns[i] = getValue(wfC, ',', i).toInt();
+  }
+}
+
+/**
+ * Display current wave form to host controller
+ */
+void displayWaveForm()
+{
+  String wfStr(waveFormPatterns[0]);
+
+  for (int i = 1; i < waveFormTotalFrames; i++) {
+    wfStr.concat(",");
+    wfStr.concat(waveFormPatterns[i]);
+  }
+
+  controller.println("OK|W|" + wfStr);
+}
+
+/**
+  Process incomming serial commands from the host/controller
+
+  Commands are:
+  
+  + Power On
+  - Off
+  s Set speed
+  v Set voltage where 0=10v, 255=whatever fixedVoltage is
+  w Set wave form csv
+  W Display current wave form
+  ? display handshake (OK|go)
+  
+*/
+void processIncoming()
+{
+  char command = serialBuffer[0];
+  switch (command) {
+    case '+' : // on
+      hbTurnOn();
+      controller.println("OK|+|!");
+      delay(30);
+      break;
+    case '-' : // off
+      hbTurnOff();
+      controller.println("OK|-|!");
+      delay(30);
+      break;
+    case 's' : // set speed
+      setHbSpeed(getValue(serialBuffer, '|', 1).toInt());
+      controller.println("OK|s|!");
+      delay(30);
+      break;
+    case 'd' : // delay between circles
+      //setCycleGap(getValue(serialBuffer, '|', 1).toInt());
+      controller.println("E|d|not supported now|!");
+      delay(30);
+      break;
+    case 'v' : // set voltage where 0=10v, 255=fixedVoltage
+      setVoltageByValue(getValue(serialBuffer, '|', 1).toInt());
+      controller.println("OK|v|!");
+      delay(30);
+      break;
+    case 'w' : // set waveform if off and wave form is valid/safe to use
+      if (!turnedOn) {
+        if (validateWaveForm()) {
+          setWaveForm(getValue(serialBuffer, '|', 1));
+          controller.println("OK|w|" + getValue(serialBuffer, '|', 1) + "|!");
+          delay(30);
+        } else {
+          controller.println("E|w|bad wave form, cannot use|!");
+        }
+      } else {
+        controller.println("E|w|running, stop to set wave form|!");
+      }
+      break;
+    case 'W' : // display current waveform
+      displayWaveForm();
+      break;
+    case '?' : // handshake requested, do somehting back so they know we are alive and happy!
+      controller.println("OK|go|!");//here is our handshake you smuck!
+      delay(30);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+  Read known incoming serial data from controller in to char array
+  to then process
 */
 void scanForIncoming()
 {
@@ -414,193 +632,6 @@ void scanForIncoming()
 
 }
 
-void setCycleGap(int cycleStartDelayCount)
-{
-  return;
-  //not used now, specify waveform in CVS setting now
-  maxSegments = 7 + cycleStartDelayCount;
-  if (maxSegments < 7) maxSegments = 7; //stop nagitive values, must always be 4 steps 0=1
-  else if (maxSegments > 99) maxSegments = 99;
-}
-
-/**
-  Set speed of h-bridge 0 is around 25Hz AC and 255 is 2.1kHz AC with 48v input -
-  last checked AC freq.: 10th March 2016
-*/
-void setHbSpeed(int value)
-{
-  if (value != lastHbSpeed) {
-    long newCounter = map((long)value, 0, 255, 65225, 65531);
-    lastHbSpeed = value;
-
-    //keep in range
-    if (newCounter > 65531) newCounter = 65531;
-    else if (newCounter < 65225) newCounter = 65225;
-
-    timer1_counter = newCounter;
-    //  Serial.print("New counter: ");
-    //  Serial.println(newCounter, DEC);
-  }
-}
-
-void setVoltage(double newVoltage)
-{
-  if (stepdownLastVoltage != newVoltage) {
-    stepdownLastVoltage = newVoltage;
-    //Serial.println(newVoltage);
-    int integerPart = (int)newVoltage;
-    int decimalPart = ((int)(newVoltage * 100) % 100);
-    String s = "";
-    if (decimalPart == 0) s = "0";
-    char buf[16];
-    char buf2[2];
-    s.toCharArray(buf2, 2);
-    sprintf(buf, ":04su%d%d%s\r\n", integerPart, decimalPart, buf2);
-    Serial.println(buf);
-  }
-}
-
-double mapDouble(double x, double in_min, double in_max, double out_min, double out_max)
-{
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
-
-void setVoltageByPwmValue(int pwmValue)
-{
-  double newVoltage  = mapDouble((double)pwmValue, 0.00, 255.00, 10.00, fixedVoltage - 2.5);
-  if (newVoltage > fixedVoltage - 2.5) newVoltage = fixedVoltage - 2.5;
-  if (newVoltage < 10.00) newVoltage = 10.00;
-  setVoltage(newVoltage);
-}
-
-/**
-   Make sure wave form always goes to 0 before 1 or 2 i.e: 1,2,0
-
-   0 = off
-   1 = on positive
-   2 = on nagitive
-*/
-boolean validateWaveForm()
-{
-  if (waveFormPatterns[waveFormTotalFrames - 1] != 0 && waveFormPatterns[0] != 0) {
-    //need to zero somewhere, must be at end or at start, end is better!
-    return false;
-  }
-
-  boolean onOne = false;
-  boolean onTwo = false;
-  for(int replay=0; replay<2; replay++) {
-    //check wave form twice, but on 2nd time we only go up to next Zero
-    for (int i = 0; i < waveFormTotalFrames; i++) {
-      if (waveFormPatterns[i] == 1) { 
-        // positive
-        onOne = true;
-      }
-      else if (waveFormPatterns[i] == 2) { 
-        //negitive
-        onTwo = true;
-      } else { 
-        //anything else off - zero, this is very good!
-        onOne = false;
-        onTwo = false;
-        if (replay==1) {
-          break 2; //break out of both loops, checked what we need
-        }
-      }
-  
-      if (onOne && onTwo) {
-        //can't have both on without going to Zero, ERROR!
-        return false; 
-      }
-    }
-  }
-
-  return true;
-}
-
-void setWaveForm(String wf)
-{
-  char wfC[80];
-  wf.toCharArray(wfC, 80);
-  waveFormTotalFrames = 1;
-  for (int i = 0; i < wf.length(); i++) {
-    if (wfC[i] = ',') waveFormTotalFrames++;
-  }
-  for (int i = 0; i < waveFormTotalFrames; i++) {
-    waveFormPatterns[i] = getValue(wfC, ',', i).toInt();
-  }
-}
-
-void displayWaveForm()
-{
-  String wfStr(waveFormPatterns[0]);
-
-  for (int i = 1; i < waveFormTotalFrames; i++) {
-    wfStr.concat(",");
-    wfStr.concat(waveFormPatterns[i]);
-  }
-
-  controller.println("OK|W|" + wfStr);
-}
-
-/**
-  Process serial commands
-*/
-void processIncoming()
-{
-  char command = serialBuffer[0];
-  switch (command) {
-    case '+' : // on
-      hbTurnOn();
-      controller.println("OK|+|!");
-      delay(30);
-      break;
-    case '-' : // off
-      hbTurnOff();
-      controller.println("OK|-|!");
-      delay(30);
-      break;
-    case 's' : // set speed
-      setHbSpeed(getValue(serialBuffer, '|', 1).toInt());
-      controller.println("OK|s|!");
-      delay(30);
-      break;
-    case 'd' : // delay between circles
-      //setCycleGap(getValue(serialBuffer, '|', 1).toInt());
-      controller.println("E|d|Not support now|!");
-      delay(30);
-      break;
-    case 'v' : // set voltage where 0=10v, 255=fixedVoltage
-      setVoltageByPwmValue(getValue(serialBuffer, '|', 1).toInt());
-      controller.println("OK|v|!");
-      delay(30);
-      break;
-    case 'w' : // set waveform if off and wave form is valid/safe to use
-      if (!turnedOn) {
-        if (validateWaveForm()) {
-          setWaveForm(getValue(serialBuffer, '|', 1));
-          controller.println("OK|w|" + getValue(serialBuffer, '|', 1) + "|!");
-          delay(30);
-        } else {
-          controller.println("E|w|bad wave form, cannot use|!");
-        }
-      } else {
-        controller.println("E|w|running, stop to set wave form|!");
-      }
-      break;
-    case 'W' : // display current waveform
-      displayWaveForm();
-      break;
-    case '?' : // handshake requested, do somehting back so they know we are alive and happy!
-      controller.println("OK|go|!");//here is our handshake you smuck!
-      delay(30);
-      break;
-    default:
-      break;
-  }
-}
-
 
 /**
  * The timer that does the buiness switching the H-Bridge 
@@ -609,22 +640,22 @@ ISR(TIMER1_OVF_vect)
 {
   TCNT1 = timer1_counter;   // preload timer for next time
   if (!turnedOn && !turnedOff) {
-    positive.off();
-    negitive.off();
+    hbNormal.off();
+    hbInverted.off();
     waveFormFramePlayingNow = 0;
     turnedOff = true;
     led.off();
   } else if (turnedOn) { 
     switch (waveFormPatterns[waveFormFramePlayingNow]) {
       case 1 :
-        positive.on();//+ pulse
+        hbNormal.on();//forwards (+ -)
         break;
       case 2:
-        negitive.on();// - pulse
+        hbInverted.on();//backwards (- +)
         break;
       default :   //anything else turn off
-        positive.off();
-        negitive.off();
+        hbNormal.off();
+        hbInverted.off();
     }
     waveFormFramePlayingNow++;
     if (waveFormFramePlayingNow >= waveFormTotalFrames) {
@@ -633,19 +664,6 @@ ISR(TIMER1_OVF_vect)
 
   }
 }
-
-
-/**
-  Interrupt service routine for basic sq wave form with gaps to allow mosfets to close due to back emf from coil
-
-  1 cycle consists of 16 fractions of equal time:
-  direction:   [+][+][+][+][+][+][0][0][-][-][- ][- ][- ][- ][0 ][0 ]
-  pos:         [0][1][2][3][4][5][6][7][8][9][10][11][12][13][14][15]
-  we modify th gap at end of each cycle to control power
-  wave form     | |_   _| |_   _| |_   _[_(*X)]
-                    |_|     |_|     |_|
-*/
-
 
 
 /**
@@ -702,7 +720,7 @@ void setup()
   led.off();
   Serial.println(":04so0\r\n");
   delay(60);
-  setVoltageByPwmValue(0);
+  setVoltageByValue(0);
   //Serial.println(":04su1000\r\n");
   delay(60);
   Serial.println(":04si1000\r\n");
