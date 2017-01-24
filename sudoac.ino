@@ -7,7 +7,7 @@
   |_____/  \__,_| \__,_| \___/  /_/    \_\\_____| 0.2
 
   Free Phases AC sq wave simulator with current sense and power control via TTL
-  Voltage is fixed at 42.00 volts for 4.3 ohm coil
+  Voltage controlled by stepdown module via TTL serial 
 
   For the Public domain!
 
@@ -94,10 +94,6 @@ SoftwareSerial controller(12, 3);
 */
 volatile long timer1_counter;
 
-/**
-  Current sensor port
-*/
-const int acs715port = A0;
 
 /**
   Interval between reading current sensor in millis
