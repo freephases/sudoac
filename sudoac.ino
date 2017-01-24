@@ -207,11 +207,12 @@ float stepdownVoltage = 0.000;
   Others good ones to play with are:
   1,1,1,0,2,2,2,0 - slows freq down, can keep going repeating 1s or 2s
   1,1,0,1,1,0,2,2,0,2,2,0 - maybe closest to wave form that was suggested by someone ;)
-  
-  DC only wave form examples:
-  1 - always postive side on, normal dc
-  2 - always negtive side on, normal dc
-  1,0 - dc pwm
+  2,2,0,1,0 -- same as 1,1,0,2,0 except it's the other way around!
+    
+  DC only waveform examples:
+  1 - constant +- normal dc
+  2 - same as above but someone swiched the wires HA HA!
+  1,0 - simple dc pwm
   2,0 - dc pwm but the other way around ;)
   
 */
