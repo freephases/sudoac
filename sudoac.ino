@@ -180,7 +180,7 @@ float stepdownVoltage = 0.000;
    waveFormPatterns, up to LL_WF_MAX_PATS, where each value is equal to one
    segment of the timer call based on current speed/frequency set, see setHbSpeed
 
-   1 = (+ -) side on h-bridge
+   1 = (+ -) normal side on h-bridge
    2 = (- +) inverted to first side
    0 = open/off (or anything not a 1 or 2)
 
@@ -207,7 +207,7 @@ float stepdownVoltage = 0.000;
                   |_|
 
                      _ _
-      2,0,1,2 =    _| | |
+      2,0,1,2 =    _|   |
                 |_|   |_|
 
 
