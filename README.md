@@ -40,7 +40,7 @@ Error where [msg] is error message<br />
 Example: E|Error|!<br />
 
 Basic commands are:
-  
+<pre> 
   + 
   Power On
   
@@ -61,6 +61,6 @@ Basic commands are:
 
   ? 
   display handshake, output is OK|go|!
-
+</pre> 
 
 
