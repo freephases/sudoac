@@ -90,11 +90,6 @@ OnOff led(13);
 SoftwareSerial controller(12, 3);
 
 /**
-  Wave form counter for wave form segment
-*/
-volatile int8_t segment = 0;
-
-/**
   16MHz/256 timer time
 */
 volatile long timer1_counter;
@@ -136,9 +131,6 @@ long sampleAmpVal = 0;
 long avgSAV = 0;
 long sensorValue = 0;
 long currentReadCount = 0;
-
-int8_t maxSegments = 7;//0 based 7=8 segments, stop tim extended by 'd' command
-
 
 /**
   fanTurnOffTimeOut - used to switch off fan after a set time after h-bridge is turned off
@@ -233,10 +225,6 @@ short waveFormPatterns[LL_WF_MAX_PATS] = {1, 1, 0, 2, 2, 0};
 //internally used...
 short waveFormTotalFrames = 6;
 volatile int waveFormFramePlayingNow = 0;
-
-
-
-
 
 /**
   Return a value from within a CSV string where index is the coloumn count,
