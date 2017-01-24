@@ -1,10 +1,52 @@
 /***
+   _____             _                    _____
+  / ____|           | |            /\    / ____|
+  | (___   _   _   __| |  ___      /  \  | |
+  \___ \ | | | | / _` | / _ \    / /\ \ | |
+  ____) || |_| || (_| || (_) |  / ____ \| |____
+  |_____/  \__,_| \__,_| \___/  /_/    \_\\_____| 0.2
+
   Free Phases AC sq wave simulator with current sense and power control via TTL
   Voltage is fixed at 42.00 volts for 4.3 ohm coil
 
   For the Public domain!
 
   Your free to criticise and free to reuse whatever you want - Have Fun!
+
+  This is for use with Lenr Logger/Pid, see:
+  https://github.com/freephases/lenr-logger2
+
+  Uses:
+  Mini pro 5v
+  Stepdown module with serial connection:
+   - DPS-6015A - 900W 0-60V 15A Programmable DC-DC Step-down Switch Power Supply Converter M0F0
+     https://www.dropbox.com/s/wl114xaxgbhkgfc/E1600%20User%27s%20manual%20of%20DPS-6015A.pdf?dl=0
+     (had to traslate serial protocal doc to english, ask me for it if you want it)
+     http://r.ebay.com/Zwn4K1
+
+  Uses main Serial (0) for Stepdown module so have to unplug wires if uploading to mini pro
+  Could not get software serial to read more then one port even when using lisern due to speed i think
+  Software serial is being used for comms with host controllor (the LENR legger/pid)
+
+   Copyright (c) 2015-2017 free phases research
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+   THE SOFTWARE.
 **/
 
 //on/off class see: https://github.com/freephases/arduino-onoff-lib
@@ -15,7 +57,7 @@
 /**
   Max length of serial data we want to read as a single resquest/command
 */
-#define MAX_SERIAL_DATA_LENGTH 30
+#define MAX_SERIAL_DATA_LENGTH 54
 
 /**
   H-Bridge heat sink fan
@@ -66,10 +108,6 @@ const int acs715port = A0;
   Interval between reading current sensor in millis
 */
 const unsigned long currentReadMillisInterval = 1000;
-/**
-  samplesToRead = Number of samples from current sensor to read
-*/
-//const int samplesToRead = 66;
 
 /**
   Last time current was read in millis
@@ -79,7 +117,7 @@ unsigned long lastCurrentReadMillis = 0;
 /**
   DC input voltage
 */
-const float fixedVoltage = 50.0;//as of 13-12-2016
+const float fixedVoltage = 50.0;//as of 13-12-2016, no get voltage from stepdown mod!!
 
 /**
   Average DC input Amps
@@ -120,7 +158,8 @@ short pos = 0; // position in read serialBuffer
 char serialBuffer[MAX_SERIAL_DATA_LENGTH];
 char inByte = 0;
 
-int lastPercentage = 0;
+int lastHbSpeed = 0;
+double stepdownLastVoltage = 0.00;
 
 const float powerSupplyMaxWatts = 500.00;// is 400 but say 390 to be on the safe side, that is if the fixedVoltage var specified above is correct for given PSU
 /**
@@ -137,25 +176,55 @@ int stepdownBufPos = 0;
 float stepdownVoltage = 0.000;
 
 #define LL_WF_MAX_PATS 40
-short waveFormPatterns[LL_WF_MAX_PATS] = {1,1,0,2,2,0};
+/**
+   waveFormPatterns, up to LL_WF_MAX_PATS, where each value is equal to one
+   segment of the timer call based on current speed/frequency
+
+   1 = positive on
+   2 = negitive on
+   0 = off (or anything not a 1 or 2)
+
+   There must be a 0 always before a 1 or a 2. We always start as off so starting with 0 will just delay the start!
+
+    Good Examples:
+               _
+    1,0,2,0 = | |_   _
+                  |_|
+                   __
+    1,1,0,2,2,0 = |  |_    _
+                       |__|
+           _
+    1,0 = | |_
+
+    2,0 =    _
+          |_|
+
+   The last 2 will give normal PWM type DC, all the others are AC
+   
+   Bad examples are:
+                 ___   _
+      1,2,0,1 = |   |_| |
+                  |_|
+
+                     _ _
+      2,0,1,2 =    _| | |
+                |_|   |_|
+
+
+  No Zero means certain death for the h-bridge!
+    
+  1,1,0,2,2,0 is the default on, this is always longer than off type AC sq waveform
+  
+  Others good ones to play with are:
+  1,1,1,0,2,2,2,0 - slows freq down
+  1,1,0,1,1,0,2,2,0,2,2,0 - maybe closest to wave form seen in photos ;)
+*/
+short waveFormPatterns[LL_WF_MAX_PATS] = {1, 1, 0, 2, 2, 0}; 
+//internally used...
 short waveFormTotalFrames = 6;
-volatile waveFormFramePlayingNow = 0;
+volatile int waveFormFramePlayingNow = 0;
 
 
-//NOT USED DOES NOT WORK ON MINI PRO
-//readVcc() {
-//  long result;
-//  // Read 1.1V reference against AVcc
-//  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-//  delay(2);
-//  // Wait for Vref to settle
-//  ADCSRA |= _BV(ADSC);  // Convert
-//  while (bit_is_set(ADCSRA, ADSC));
-//  result = ADCL;
-//  result |= ADCH << 8;
-//  result = 1126400L / result; // Back-calculate AVcc in mV return result;
-//  return result;
-//}
 
 
 
@@ -209,88 +278,14 @@ void requestStepdownStats()
   Serial.println(":04rvjw\r\n");
 }
 
-/**
-  Read and process Current sensor using avg of raw analog values
-*/
-//void readCurrentAvg1XX()
-//{
-//  sensorValue = analogRead(acs715port);
-//  sampleAmpVal += sensorValue;
-//  currentReadCount++;
-//  if (currentReadCount == samplesToRead) {
-//    avgSAV = sampleAmpVal / samplesToRead;
-//
-//    //reset counters
-//    sampleAmpVal = 0;
-//    currentReadCount = 0;
-//
-//    // Serial.println(readVcc());//readVcc not working on mini pro ;)
-//    long currentR = ( ((long)avgSAV * 4889 / 1024) - 500 ) * 1000 / 133;
-//
-//    averageAmps = (float)currentR / 1000.000;
-//    if (averageAmps <= 0.09) averageAmps = 0.0;
-//
-//    watts = averageAmps * fixedVoltage;
-//    if (watts < 0.000) {
-//      watts = 0.000;
-//    }
-//
-//    sendData();
-//    if (DEBUG_TO_SERIAL == 1) {
-//      Serial.print(currentR);
-//      Serial.print(" mA, ");
-//      Serial.print(averageAmps, DEC);
-//      Serial.print(" A, ");
-//      Serial.print(watts, DEC);
-//      Serial.println(" W");
-//    }
-//  }
-//}
 
-/**
-  Read and process Current sensor using avg of calculated analog values
-*/
-//void readCurrentAvg2()
-//{
-//  sensorValue = analogRead(acs715port);
-//  //sampleAmpVal += sensorValue;
-//  long currentR = ( ((long)sensorValue * 5006 / 1024) - 500 ) * 1000 / 133;
-//  if (currentR<0) currentR = 0;
-//  totalAverageValues += (float)currentR / 1000.000;
-//  currentReadCount++;
-//  if (currentReadCount == samplesToRead) {
-//    averageAmps = totalAverageValues / samplesToRead;
-//
-//    //reset counters
-//    totalAverageValues = 0;
-//    currentReadCount = 0;
-//
-//
-//    if (averageAmps<=0.09) averageAmps=0.0;
-//
-//    watts = averageAmps * fixedVoltage;
-//    if (watts<0.000) {
-//      watts = 0.000;
-//    }
-//
-//    sendData();
-//    if (DEBUG_TO_SERIAL == 1) {
-//     // Serial.print(currentR);
-//     // Serial.print(" mA, ");
-//      Serial.print(averageAmps, DEC);
-//      Serial.print(" A, ");
-//      Serial.print(watts, DEC);
-//      Serial.println(" W");
-//    }
-//  }
-//}
 
 void checkOverLoading()
 {
   if (!turnedOff) {
     if (watts > powerSupplyMaxWatts) {
       hbTurnOff(); //force stop, using way to much power for way to long
-      controller.println("E|HA|!"); //High Amps message, have to reboot to get out of this, it should not happen if you have calculated coil ohm's correctly.
+      controller.println("E|!|HA|!"); //High Amps message, have to reboot to get out of this, it should not happen if you have calculated coil ohm's correctly.
     }
   }
 }
@@ -334,7 +329,7 @@ void manageFan()
 
 void processStepdownSerial()
 {
-  if (stepdownSerialBuf[0] != ':') return; //not valid
+  if (stepdownSerialBuf[0] != ':') return; //not valid, ignore
 
   if (strlen(stepdownSerialBuf) > 5 && stepdownSerialBuf[3] == 'r') {
     stepdownSerialBuf[strlen(stepdownSerialBuf) - 1] = 0; //remove hash check
@@ -421,6 +416,8 @@ void scanForIncoming()
 
 void setCycleGap(int cycleStartDelayCount)
 {
+  return;
+  //not used now, specify waveform in CVS setting now
   maxSegments = 7 + cycleStartDelayCount;
   if (maxSegments < 7) maxSegments = 7; //stop nagitive values, must always be 4 steps 0=1
   else if (maxSegments > 99) maxSegments = 99;
@@ -432,30 +429,35 @@ void setCycleGap(int cycleStartDelayCount)
 */
 void setHbSpeed(int value)
 {
-  long newCounter = map((long)value, 0, 255, 65225, 65531);
+  if (value != lastHbSpeed) {
+    long newCounter = map((long)value, 0, 255, 65225, 65531);
+    lastHbSpeed = value;
 
-  lastPercentage = percentage;
+    //keep in range
+    if (newCounter > 65531) newCounter = 65531;
+    else if (newCounter < 65225) newCounter = 65225;
 
-  //keep in range
-  if (newCounter > 65531) newCounter = 65531;
-  else if (newCounter < 65225) newCounter = 65225;
-
-  timer1_counter = newCounter;
-  //  Serial.print("New counter: ");
-  //  Serial.println(newCounter, DEC);
+    timer1_counter = newCounter;
+    //  Serial.print("New counter: ");
+    //  Serial.println(newCounter, DEC);
+  }
 }
 
-void setVoltage(double newVoltage) {
-  //Serial.println(newVoltage);
-  int integerPart = (int)newVoltage;
-  int decimalPart = ((int)(newVoltage * 100) % 100);
-  String s = "";
-  if (decimalPart == 0) s = "0";
-  char buf[16];
-  char buf2[2];
-  s.toCharArray(buf2, 2);
-  sprintf(buf, ":04su%d%d%s\r\n", integerPart, decimalPart, buf2);
-  Serial.println(buf);
+void setVoltage(double newVoltage)
+{
+  if (stepdownLastVoltage != newVoltage) {
+    stepdownLastVoltage = newVoltage;
+    //Serial.println(newVoltage);
+    int integerPart = (int)newVoltage;
+    int decimalPart = ((int)(newVoltage * 100) % 100);
+    String s = "";
+    if (decimalPart == 0) s = "0";
+    char buf[16];
+    char buf2[2];
+    s.toCharArray(buf2, 2);
+    sprintf(buf, ":04su%d%d%s\r\n", integerPart, decimalPart, buf2);
+    Serial.println(buf);
+  }
 }
 
 double mapDouble(double x, double in_min, double in_max, double out_min, double out_max)
@@ -472,19 +474,75 @@ void setVoltageByPwmValue(int pwmValue)
   setVoltage(newVoltage);
 }
 
+/**
+   Make sure wave form always goes to 0 before 1 or 2 i.e: 1,2,0
+
+   0 = off
+   1 = on positive
+   2 = on nagitive
+*/
+boolean validateWaveForm()
+{
+  if (waveFormPatterns[waveFormTotalFrames - 1] != 0 && waveFormPatterns[0] != 0) {
+    //need to zero somewhere, must be at end or at start, end is better!
+    return false;
+  }
+
+  boolean onOne = false;
+  boolean onTwo = false;
+  for(int replay=0; replay<2; replay++) {
+    //check wave form twice, but on 2nd time we only go up to next Zero
+    for (int i = 0; i < waveFormTotalFrames; i++) {
+      if (waveFormPatterns[i] == 1) { 
+        // positive
+        onOne = true;
+      }
+      else if (waveFormPatterns[i] == 2) { 
+        //negitive
+        onTwo = true;
+      } else { 
+        //anything else off - zero, this is very good!
+        onOne = false;
+        onTwo = false;
+        if (replay==1) {
+          break 2; //break out of both loops, checked what we need
+        }
+      }
+  
+      if (onOne && onTwo) {
+        //can't have both on without going to Zero, ERROR!
+        return false; 
+      }
+    }
+  }
+
+  return true;
+}
+
 void setWaveForm(String wf)
 {
   char wfC[80];
-  wf.toCharArray(wfC);
+  wf.toCharArray(wfC, 80);
   waveFormTotalFrames = 1;
-  for(int i=0;i<wf.length(); i++) {
-     if (wfC[i]=',') waveFormTotalFrames++;     
+  for (int i = 0; i < wf.length(); i++) {
+    if (wfC[i] = ',') waveFormTotalFrames++;
   }
-  for(int i=0; i<waveFormTotalFrames; i++) {
+  for (int i = 0; i < waveFormTotalFrames; i++) {
     waveFormPatterns[i] = getValue(wfC, ',', i).toInt();
-  } 
+  }
 }
 
+void displayWaveForm()
+{
+  String wfStr(waveFormPatterns[0]);
+
+  for (int i = 1; i < waveFormTotalFrames; i++) {
+    wfStr.concat(",");
+    wfStr.concat(waveFormPatterns[i]);
+  }
+
+  controller.println("OK|W|" + wfStr);
+}
 
 /**
   Process serial commands
@@ -509,8 +567,8 @@ void processIncoming()
       delay(30);
       break;
     case 'd' : // delay between circles
-      setCycleGap(getValue(serialBuffer, '|', 1).toInt());
-      controller.println("OK|d|!");
+      //setCycleGap(getValue(serialBuffer, '|', 1).toInt());
+      controller.println("E|d|Not support now|!");
       delay(30);
       break;
     case 'v' : // set voltage where 0=10v, 255=fixedVoltage
@@ -518,17 +576,24 @@ void processIncoming()
       controller.println("OK|v|!");
       delay(30);
       break;
-     case 'w' : // set waveform
+    case 'w' : // set waveform if off and wave form is valid/safe to use
       if (!turnedOn) {
-        setWaveForm(getValue(serialBuffer, '|', 1));
-        controller.println("OK|w|!");
-        delay(30);
+        if (validateWaveForm()) {
+          setWaveForm(getValue(serialBuffer, '|', 1));
+          controller.println("OK|w|" + getValue(serialBuffer, '|', 1) + "|!");
+          delay(30);
+        } else {
+          controller.println("E|w|bad wave form, cannot use|!");
+        }
       } else {
-        controller.println("E|already in wave formation, stop to set|!");
+        controller.println("E|w|running, stop to set wave form|!");
       }
       break;
-    case '?' : // handshake requested
-      controller.println("OK|go|!");//here is our handshake
+    case 'W' : // display current waveform
+      displayWaveForm();
+      break;
+    case '?' : // handshake requested, do somehting back so they know we are alive and happy!
+      controller.println("OK|go|!");//here is our handshake you smuck!
       delay(30);
       break;
     default:
@@ -537,67 +602,35 @@ void processIncoming()
 }
 
 
-
-//ISR(TIMER1_OVF_vect)
-//{
-//  TCNT1 = timer1_counter;   // preload timer
-//  if (!turnedOn && !turnedOff) {
-//
-//    positive.off();
-//    negitive.off();
-//    segment = 0;
-//    turnedOff = true;
-//    led.off();
-//
-//  } else if (turnedOn) {
-//
-//    switch (segment) {
-//      case 0 ... 2 :  positive.on(); // + pulse
-//        break;
-//      case 3 : positive.off();
-//        break;
-//      case 4 ... 6: negitive.on();// - pulse
-//        break;
-//      case 7 ... 99: negitive.off();
-//        break;
-//    }
-//
-//    to do waveFormPatterns in this shit!!!!
-//
-//    segment++;
-//    if (segment > maxSegments) {
-//      segment = 0;
-//    }
-//  }
-//}
-
+/**
+ * The timer that does the buiness switching the H-Bridge 
+ */
 ISR(TIMER1_OVF_vect)
 {
-  TCNT1 = timer1_counter;   // preload timer
+  TCNT1 = timer1_counter;   // preload timer for next time
   if (!turnedOn && !turnedOff) {
-
     positive.off();
     negitive.off();
     waveFormFramePlayingNow = 0;
     turnedOff = true;
     led.off();
-
-  } else if (turnedOn) {
-
+  } else if (turnedOn) { 
     switch (waveFormPatterns[waveFormFramePlayingNow]) {
-       case 1 : positive.on();
+      case 1 :
+        positive.on();//+ pulse
         break;
-      case 2: negitive.on();// - pulse
+      case 2:
+        negitive.on();// - pulse
         break;
-       default : if ( positive.getIsOn()) positive.off(); 
-                else negitive.off();
-       }
+      default :   //anything else turn off
+        positive.off();
+        negitive.off();
+    }
+    waveFormFramePlayingNow++;
+    if (waveFormFramePlayingNow >= waveFormTotalFrames) {
+      waveFormFramePlayingNow = 0;
+    }
 
-   waveFormFramePlayingNow++;
-   if (waveFormFramePlayingNow>=waveFormTotalFrames) {
-    waveFormFramePlayingNow = 0;
-   }
-    
   }
 }
 
@@ -612,143 +645,35 @@ ISR(TIMER1_OVF_vect)
   wave form     | |_   _| |_   _| |_   _[_(*X)]
                     |_|     |_|     |_|
 */
-//ISR(TIMER1_OVF_vect)
-//{
-//  TCNT1 = timer1_counter;   // preload timer
-//  if (!turnedOn && !turnedOff) {
-//
-//    positive.off();
-//    negitive.off();
-//    segment = 0;
-//    turnedOff = true;
-//    led.off();
-//
-//  } else if (turnedOn) {
-//
-//    switch(segment){
-//      case 0 ... 5: positive.on(); // + pulse
-//          break;
-//      case 6 ... 7: positive.off();
-//          break;
-//      case 8 ... 13: negitive.on();// - pulse
-//          break;
-//      case 14 ... 15: negitive.off();
-//          break;
-//
-//    }
-//
-//   segment++;
-//   if (segment>15) { segment = 0;
-//        //delau start of necxt circle
-//   }
-//
-//
-//  }
-//}
-
-/**
-  Interrupt service routine for basic 2/2 pulse sq wave form
-
-  1 cycle consists of 10 fractions of equal time:
-  direction:   [+][0][+][0][0][-][0][-][0][0]
-  pos:         [0][1][2][3][4][5][6][7][8][9]
-
-  wave form  |_|__ _ __
-                  | |
-*/
-//ISR(TIMER1_OVF_vect)
-//{
-//  TCNT1 = timer1_counter;   // preload timer
-//  if (!turnedOn && !turnedOff) {
-//
-//    positive.off();
-//    negitive.off();
-//    segment = 0;
-//    turnedOff = true;
-//    led.off();
-//
-//  } else if (turnedOn) {
-//
-//    switch(segment){
-//      case 2:
-//      case 0:  positive.on(); // + pulse
-//          break;
-//      case 3:
-//      case 1: positive.off();
-//          break;
-//      case 9:
-//      case 4: //space with nothing to do
-//          break;
-//      case 7:
-//      case 5: negitive.on();// - pulse
-//          break;
-//      case 8:
-//      case 6: negitive.off();
-//          break;
-//    }
-//    segment++;
-//    if (segment>8) segment = 0;
-//
-//  }
-//}
 
 
-
-///**
-//* interrupt service routine for sudo AC sq wave
-//*/
-//ISR(TIMER1_OVF_vect)
-//{
-//  TCNT1 = timer1_counter;   // preload timer
-//  if (!turnedOn && !turnedOff) {
-//    positive.off();
-//    negitive.off();
-//    segment = 0;
-//    turnedOff = true;
-//    led.off();
-//  } else if (turnedOn) {
-//    //1 segmentment 12/3600Hz with 2 pulses
-//    // 1 cycle is:
-//    // [P][0][N][0]
-//
-//    switch (segment) {
-//      case 0:  positive.on(); // + pulse
-//        break;
-//      case 1: positive.off();
-//        break;
-//      case 2: negitive.on();// - pulse
-//        break;
-//      case 3: negitive.off();
-//        break;
-//    }
-//    segment++;
-//    if (segment > 3) segment = 0;
-//  }
-//}
 
 /**
   Switch on H-Bridge
 */
 void hbTurnOn()
 {
+  if (!validateWaveForm()) {
+    controller.println("E|!|Bad waveform cannot run|!");
+    return;
+  }
+
   if (!turnedOn) {
     led.on();
     turnedOn = true;
     turnedOff = false;
-    Serial.println(":04so1\r\n");
-    //Serial.println("01su1500");
-    //Serial.println(":01su1500");
+    Serial.println(":04so1\r\n");//turn on step down mod
   }
 }
 
 /**
-  Inform H-Bridge interrupt to turn off H-Bridge
+  Inform H-Bridge interrupt to turn off H-Bridge and make power open on step down
 */
 void hbTurnOff()
 {
   if (!turnedOff) {
     turnedOn = false;
-    Serial.println(":04so0\r\n");
+    Serial.println(":04so0\r\n");//turn off step down
   }
 }
 
@@ -768,10 +693,6 @@ void setup()
   interrupts();             // enable all interrupts
   led.on();
   Serial.begin(9600);
-  //while (!Serial) {
-  //  ; // wait for serial port to connect. Needed for native USB port only
-  //}
-  //stepdown.begin(9600);
 
   controller.begin(11000);
 
@@ -781,7 +702,7 @@ void setup()
   led.off();
   Serial.println(":04so0\r\n");
   delay(60);
-  setVoltageByPercentage(0);
+  setVoltageByPwmValue(0);
   //Serial.println(":04su1000\r\n");
   delay(60);
   Serial.println(":04si1000\r\n");
